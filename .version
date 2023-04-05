@@ -1,10 +1,10 @@
 {
-	"previousHash": "231bc137cb49633a1975822e6da619a49f3162d7",
-	"currentRevisionId": 805,
-	"subject": "[CoffeeRequest] Improve debugging with Promises",
-	"body": "[CoffeeRequest] Improve debugging with Promises",
+	"previousHash": "c5af0d38fcdf0b7d1044038f0f10c64f57b881c7",
+	"currentRevisionId": 807,
+	"subject": "Merge branch 'dev-0.7-asynchike-main' of https://github.com/Rehike/Rehike into dev-0.7-asynchike-main",
+	"body": "Merge branch 'dev-0.7-asynchike-main' of https://github.com/Rehike/Rehike into dev-0.7-asynchike-main",
 	"branch": "dev-0.7-asynchike-main",
-	"committerName": "Taniko Yamamoto",
-	"committerEmail": "99076687+YukisCoffee@users.noreply.github.com",
-	"time": 1678770294
+	"committerName": "aubymori",
+	"committerEmail": "aubyomori@gmail.com",
+	"time": 1679122744
 }
