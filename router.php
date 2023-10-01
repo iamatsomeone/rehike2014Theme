@@ -2,10 +2,8 @@
 use Rehike\ControllerV2\Router;
 use Rehike\SimpleFunnel;
 
-if (isset($_GET["enable_polymer"]) && $_GET["enable_polymer"] == "1") {
-    SimpleFunnel::funnelCurrentPage(true);
-}
-
+// Passed through the Rehike server. These simply request the YouTube server
+// directly.
 Router::funnel([
     "/api/*",
     "/youtubei/*",
@@ -36,12 +34,23 @@ Router::funnel([
     "/features",
     "/testtube",
     "/t/terms",
-    "/iframe_api"
+    "/iframe_api",
+    "/signin_prompt",
+    "/post/*",
+    "/feeds/*",
+    "/img/*",
+    "/attribution_link*"
 ]);
 
 Router::redirect([
     "/watch/(*)" => "/watch?v=$1",
-    "/shorts/(*)" => "/watch?v=$1",
+    "/shorts/(*)" => function($request) {
+        if (isset($request->path[1]))
+            return "/watch?v=" . $request->path[1];
+        else
+            return "/watch";
+    },
+    "/live/(*)" => "/watch?v=$1",
     "/hashtag/(*)" => "/results?search_query=$1",
     "/feed/what_to_watch/**" => "/",
     "/source/(*)" => function($request) {
@@ -60,13 +69,14 @@ Router::redirect([
     "/subscription_center?(*)" => function($request) {
         if ($user = @$request->params->add_user)
             return "/user/$user?sub_confirmation=1";
+        else if ($user = @$request->params->add_user_id)
+            return "/channel/$user?sub_confirmation=1";
     }
 ]);
 
 Router::get([
     "/" => "feed",
     "/feed/**" => "feed",
-    "/debug_browse" => "debug_browse",
     "/watch" => "watch",
     "/user/**" => "channel",
     "/channel/**" => "channel",
@@ -77,8 +87,6 @@ Router::get([
     "/results" => "results",
     "/playlist" => "playlist",
     "/oops" => "oops",
-    "/forcefatal" => "forcefatal",
-    "/all_comments" => "all_comments",
     "/related_ajax" => "ajax/related",
     "/browse_ajax" => "ajax/browse",
     "/addto_ajax" => "ajax/addto",
@@ -99,6 +107,7 @@ Router::post([
     "/watch_fragments2_ajax" => "ajax/watch_fragments2",
     "/related_ajax" => "ajax/related",
     "/playlist_video_ajax" => "ajax/playlist_video",
+    "/playlist_ajax" => "ajax/playlist",
     "/subscription_ajax" => "ajax/subscription",
     "/service_ajax" => "ajax/service",
     "/comment_service_ajax" => "ajax/comment_service",

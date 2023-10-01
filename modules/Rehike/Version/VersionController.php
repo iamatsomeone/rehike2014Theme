@@ -1,6 +1,8 @@
 <?php
 namespace Rehike\Version;
 
+use DateTime, DateTimeZone;
+
 /**
  * Control the retrival of version information.
  * 
@@ -17,14 +19,12 @@ class VersionController
      * 
      * @var mixed[]
      */
-    public static $versionInfo = [];
+    public static array $versionInfo = [];
 
     /**
      * Initialise the Version subsystem.
-     * 
-     * @return void
      */
-    public static function init()
+    public static function init(): bool
     {
         static $hasRun = false;
         if ($hasRun) return true;
@@ -51,18 +51,24 @@ class VersionController
 
     /**
      * Attempt to get all relevant information about the current version.
-     * 
-     * @return void
      */
-    public static function getVersion()
+    public static function getVersion(): string
     {
         $semanticVersion = \Rehike\Constants\VERSION;
+        
+        $dateTime = new DateTime(timezone: new DateTimeZone("GMT"));
+        $dateAvailable = false;
+        if (isset(self::$versionInfo["time"]) && is_int(self::$versionInfo["time"]))
+        {
+            $dateTime->setTimestamp(self::$versionInfo["time"]);
+            $dateAvailable = true;
+        }
 
         $initStatus = self::init();
 
-        if ($initStatus && @self::$versionInfo["currentRevisionId"])
+        if ($initStatus && $dateAvailable)
         {
-            $semanticVersion .= "." . (string)self::$versionInfo["currentRevisionId"];
+            $semanticVersion .= " (" . $dateTime->format("Y-m-d") . ")";
         }
 
         return $semanticVersion;

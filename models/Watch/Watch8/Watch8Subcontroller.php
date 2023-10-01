@@ -1,13 +1,22 @@
 <?php
 namespace Rehike\Model\Watch\Watch8;
 
-use \Rehike\Model\Watch\WatchModel as WatchBase;
-use \Rehike\Model\Watch\Watch7\MVideoDiscussionRenderer;
-use \Rehike\Model\Watch\Watch7\MVideoDiscussionNotice;
-use \Rehike\Model\Watch\Watch7\MCreatorBar;
-use \Rehike\i18n;
-use \Rehike\Util\PrefUtils;
-use \Rehike\Signin\API as SignIn;
+use Rehike\Model\Watch\WatchModel as WatchBase;
+use Rehike\Model\Watch\Watch7\MVideoDiscussionDelayloadRenderer;
+use Rehike\Model\Watch\Watch7\MVideoDiscussionNotice;
+use Rehike\Model\Watch\Watch7\MCreatorBar;
+use Rehike\i18n;
+use Rehike\ConfigManager\ConfigManager;
+use Rehike\Util\PrefUtils;
+use Rehike\Signin\API as SignIn;
+use Rehike\Model\Browse\InnertubeBrowseConverter;
+use Rehike\Model\Common\MButton;
+use Rehike\Model\Traits\NavigationEndpoint;
+use Rehike\Model\Clickcard\MSigninClickcard;
+use Rehike\Model\Comments\CommentThread;
+use Rehike\Model\Comments\CommentsHeader;
+
+use function Rehike\Async\async;
 
 /**
  * Implements the watch8 subcontroller for the watch model
@@ -26,65 +35,94 @@ class Watch8Subcontroller
      */
     public static function bakeResults(&$data, $videoId)
     {
-        // Create references
-        $primaryInfo = &WatchBase::$primaryInfo;
-        $secondaryInfo = &WatchBase::$secondaryInfo;
-        $commentSection = &WatchBase::$commentSection;
+        return async(function () use (&$data, $videoId) {
+            // Create references
+            $primaryInfo = &WatchBase::$primaryInfo;
+            $secondaryInfo = &WatchBase::$secondaryInfo;
+            $commentSection = &WatchBase::$commentSection;
 
-        $results = [];
+            $results = [];
 
-        // Push creator bar if the video is yours
-        if (WatchBase::$isOwner) {
-            $results[] = (object) [
-                "videoCreatorBarRenderer" => new MCreatorBar($videoId)
+            // Push creator bar if the video is yours
+            if (WatchBase::$isOwner) {
+                $results[] = (object) [
+                    "videoCreatorBarRenderer" => new MCreatorBar($videoId)
+                ];
+            }
+
+            // Push primary info (if it exists)
+            if (!is_null($primaryInfo)) $results[] = (object)[
+                "videoPrimaryInfoRenderer" => new MVideoPrimaryInfoRenderer(WatchBase::class, $videoId)
             ];
-        }
 
-        // Push primary info (if it exists)
-        if (!is_null($primaryInfo)) $results[] = (object)[
-            "videoPrimaryInfoRenderer" => new MVideoPrimaryInfoRenderer(WatchBase::class, $videoId)
-        ];
+            // Push secondary info (if it exists)
+            if (!is_null($secondaryInfo)) $results[] = (object)[
+                "videoSecondaryInfoRenderer" => new MVideoSecondaryInfoRenderer(WatchBase::class)
+            ];
 
-        // Push secondary info (if it exists)
-        if (!is_null($secondaryInfo)) $results[] = (object)[
-            "videoSecondaryInfoRenderer" => new MVideoSecondaryInfoRenderer(WatchBase::class)
-        ];
-
-        // Push comments (if they exist)
-        if (!is_null($commentSection))
-        {
-            $content = @$commentSection->contents[0];
-
-            if (isset($content->continuationItemRenderer))
+            // Push comments (if they exist)
+            if (!is_null($commentSection))
             {
-                // If the comment section exists, create a video
-                // discussion renderer that contains its continuation.
+                // In order to determine the type of the comment section renderer,
+                // we compare the type of the first item. If it's not a special type,
+                // then we just parse the whole contents.
+                $commentContents = @$commentSection->contents;
+                $firstItem = @$commentContents[0];
 
-                $continuationToken = $content->continuationItemRenderer
-                    ->continuationEndpoint->continuationCommand->token;
-                
-                // Push the continuation token to yt global
-                WatchBase::$yt->commentsToken = $continuationToken;
+                // NOTICE (kirasicecreamm): As of 2023/09/15 or thereabout, comments
+                // may just be embedded in the response.
+                if (isset($firstItem->continuationItemRenderer))
+                {
+                    // If the comment section exists, create a video
+                    // discussion renderer that contains its continuation.
 
-                $results[] = (object)[
-                    "videoDiscussionRenderer" => new MVideoDiscussionRenderer(
-                        $continuationToken
-                    )
-                ];
+                    $continuationToken = $firstItem->continuationItemRenderer
+                        ->continuationEndpoint->continuationCommand->token;
+                    
+                    // Push the continuation token to yt global
+                    WatchBase::$yt->commentsToken = $continuationToken;
+
+                    $results[] = (object)[
+                        "videoDiscussionDelayloadRenderer" => new MVideoDiscussionDelayloadRenderer(
+                            $continuationToken
+                        )
+                    ];
+                }
+                else if (isset($firstItem->messageRenderer))
+                {
+                    // If the comment section renderer contains a message,
+                    // create a videoDiscussionNotice instead.
+                    $message = $firstItem->messageRenderer->text;
+
+                    $results[] = (object)[
+                        "videoDiscussionNotice" => new MVideoDiscussionNotice($message)
+                    ];
+                }
+                else if (isset($commentContents))
+                {
+                    // In this case, the comments are baked into the response rather
+                    // than delayloaded.
+                    $videoId = WatchBase::$yt->videoId ?? $_GET["v"];
+
+                    $headerRenderer = CommentsHeader::fromData(
+                        $commentSection?->header[0]?->commentsHeaderRenderer
+                    );
+
+                    $contentsRenderer = yield CommentThread::bakeComments(
+                        $commentContents
+                    );
+
+                    $results[] = (object)[
+                        "videoDiscussionRenderer" => (object)[
+                            "headerRenderer" => $headerRenderer,
+                            "comments" => $contentsRenderer
+                        ]
+                    ];
+                }
             }
-            else if (isset($content->messageRenderer))
-            {
-                // If the comment section renderer contains a message,
-                // create a videoDiscussionNotice instead.
-                $message = $content->messageRenderer->text;
 
-                $results[] = (object)[
-                    "videoDiscussionNotice" => new MVideoDiscussionNotice($message)
-                ];
-            }
-        }
-
-        return $results;
+            return $results;
+        });
     }
 
     /**
@@ -102,8 +140,7 @@ class Watch8Subcontroller
         // Get data from the reference in the datahost
         $origResults = &WatchBase::$secondaryResults;
         $response = [];
-        $i18n = i18n::newNamespace("watch/sec_results");
-        $i18n->registerFromFolder("i18n/watch");
+        $i18n = i18n::getNamespace("watch");
 
         if (isset($origResults->results))
         {
@@ -130,6 +167,8 @@ class Watch8Subcontroller
             {
                 return null;
             }
+
+            InnertubeBrowseConverter::generalLockupConverter($recomsList);
 
             if (self::shouldUseAutoplay($data))
             {
@@ -171,13 +210,11 @@ class Watch8Subcontroller
      * 
      * This checks if the playlist is present and returns
      * the playlist data if so.
-     * 
-     * @param object $data
-     * @return object
      */
-    public static function bakePlaylist(&$data)
+    public static function bakePlaylist(): ?object
     {
         $playlist = &WatchBase::$playlist;
+        $i18n = i18n::getNamespace("watch");
 
         // Return null if there is no playlist, this
         // makes the templater ignore it.
@@ -199,14 +236,14 @@ class Watch8Subcontroller
 
                 if ("1" == $videoCount)
                 {
-                    $videoCount = "1 video";
+                    $videoCount = $i18n->playlistVideosSingular;
                 }
                 else
                 {
-                    $videoCount .= " videos";
+                    $videoCount = $i18n->playlistVideosPlural($videoCount);
                 }
 
-                $out->videoCountText = (object)[
+                $out->videoCountText = (object) [
                     "currentIndex" => $curIndex,
                     "videoCount" => $videoCount
                 ];
@@ -217,16 +254,18 @@ class Watch8Subcontroller
             // Copied from Daylin's implementation again
             $playlistId = &WatchBase::$yt->playlistId;
 
+            $out->isMix = substr($playlistId, 0, 2) == "RD";
+
             $curIndexInt = &$list->localCurrentIndex;
             $prevIndexInt = $curIndexInt - 1;
             $nextIndexInt = $curIndexInt + 1;
 
             if ($prevIndexInt < 0)
             {
-                $prevIndexInt = count($list->contents ?? [0]) - 1;
+                $prevIndexInt = count($list->contents) - 1;
             }
 
-            if ($nextIndexInt > count($list->contents ?? [0]) - 1)
+            if ($nextIndexInt > count($list->contents) - 1)
             {
                 $nextIndexInt = 0;
             }
@@ -243,21 +282,77 @@ class Watch8Subcontroller
             ;
             $nextUrl = "/watch?v={$nextId}&index={$nextIndexIntPlus}&list={$playlistId}";
 
-            // Push those to output
-            $out->previousVideo = [
-                "id" => $prevId,
-                "url" => $prevUrl
-            ];
+            // Previous and next buttons
+            // These are hidden, but the JS uses them, and there is also CSS
+            // themes that unhide these buttons.
+            $out->behaviorControls = [];
+            $out->behaviorControls[] = new MButton([
+                "size" => "SIZE_DEFAULT",
+                "style" => "STYLE_OPACITY",
+                "tooltip" => $i18n->playlistPrevVideo,
+                "navigationEndpoint" => NavigationEndpoint::createEndpoint($prevUrl),
+                "icon" => (object) [
+                    "iconType" => "WATCH_APPBAR_PLAY_PREV"
+                ],
+                "class" => [
+                    "hid",
+                    "prev-playlist-list-item",
+                    "yt-uix-tooltip-masked",
+                    "yt-uix-button-player-controls"
+                ]
+            ]);
+            $out->behaviorControls[] = new MButton([
+                "size" => "SIZE_DEFAULT",
+                "style" => "STYLE_OPACITY",
+                "tooltip" => $i18n->playlistNextVideo,
+                "navigationEndpoint" => NavigationEndpoint::createEndpoint($nextUrl),
+                "icon" => (object) [
+                    "iconType" => "WATCH_APPBAR_PLAY_NEXT"
+                ],
+                "class" => [
+                    "hid",
+                    "next-playlist-list-item",
+                    "yt-uix-tooltip-masked",
+                    "yt-uix-button-player-controls"
+                ]
+            ]);
 
-            /*
-             * FIX (kirasicecreamm): Taniko, you're a fucking idiot.
-             * 
-             * (rename the variable next time lol)
-             */
-            $out->nextVideo = [
-                "id" => $nextId,
-                "url" => $nextUrl
-            ];
+            $isSaved = $out->menu->menuRenderer->items[0]->toggleMenuServiceItemRenderer->isToggled ?? false;
+
+            $out->saveButton = new MButton([
+                "size" => "SIZE_DEFAULT",
+                "style" => "STYLE_OPACITY",
+                "id" => "gh-playlist-save",
+                "icon" => (object) [],
+                "class" => [
+                    "yt-uix-button-player-controls",
+                    "yt-uix-playlistlike",
+                    "watch-playlist-like",
+                    $isSaved ? "yt-uix-button-toggled" : ""
+                ],
+                "tooltip" => $isSaved ? $i18n->playlistUnsave : $i18n->playlistSave,
+                "attributes" => [
+                    "like-label" => "",
+                    "playlist-id" => $out->playlistId,
+                    "unlike-label" => "",
+                    "unlike-tooltip" => $i18n->playlistUnsave,
+                    "like-tooltip" => $i18n->playlistSave,
+                    "toggle-class" => "yt-uix-button-toggled",
+                    "token" => "dummy"
+                ]
+            ]);
+
+            if (!SignIn::isSignedIn())
+            {
+                $out->saveButton->clickcard = new MSigninClickcard(
+                    $i18n->clickcardPlaylistSignIn,
+                    "",
+                    [
+                        "text" => $i18n->clickcardSignIn,
+                        "href" => "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Fnext%3D%252F%253Faction_handle_signin%3Dtrue%26feature%3D__FEATURE__%26hl%3Den%26app%3Ddesktop&passive=true&hl=en&uilel=3&service=youtube"
+                    ]
+                );
+            }
         }
 
         return $out;

@@ -1,50 +1,125 @@
 <?php
 use \Com\Youtube\Innertube\Request\BrowseRequestParams;
 
+use Rehike\YtApp;
+use Rehike\ControllerV2\RequestMetadata;
+
 use \Rehike\Controller\core\NirvanaController;
 use \Rehike\Model\Playlist\PlaylistModel;
 use \Rehike\Model\Channels\Channels4Model;
+use \Rehike\Model\Channels\Channels4\MHeader;
+use \Rehike\Model\Channels\Channels4\MCarouselHeader;
+use \Rehike\Model\Channels\Channels4\MSecondaryHeader;
 use \Rehike\Util\Base64Url;
-use \Rehike\Request;
+use \Rehike\Network;
 use \Rehike\i18n;
+use Rehike\Util\ChannelUtils;
+use Rehike\Signin\API as SignIn;
 
-return new class extends NirvanaController {
-    public $template = "playlist";
+use function Rehike\Async\async;
 
-    public function onGet(&$yt, $request) {
-        if (!isset($request->params->list)) {
-            header("Location: /oops");
-        }
+return new class extends NirvanaController
+{
+    public string $template = "playlist";
 
-        $yt->playlistId = $request->params->list;
+    public function onGet(YtApp $yt, RequestMetadata $request): void
+    {
+        async(function() use (&$yt, $request) {
+            if (!isset($request->params->list))
+            {
+                header("Location: /oops");
+            }
 
-        $this->setEndpoint("browse", "VL" . $yt->playlistId);
+            // The playlist ID is stored in the URL parameter ?list=...
+            $yt->playlistId = $request->params->list;
 
-        Request::queueInnertubeRequest("main", "browse", (object) [
-            "browseId" => "VL" . $yt->playlistId
-        ]);
-        $ytdata = json_decode(Request::getResponses()["main"]);
+            // Internally, all playlist IDs are prefixed with VL, followed by
+            // their canonical prefix (PL, RD, LL, UU, etc.).
+            $this->setEndpoint("browse", "VL" . $yt->playlistId);
 
-        $yt->ucid = $ytdata->header->playlistHeaderRenderer->ownerEndpoint->browseEndpoint->browseId ?? null;
+            $response = yield Network::innertubeRequest(
+                action: "browse",
+                body: [
+                    "browseId" => "VL" . $yt->playlistId
+                ]
+            );
 
-        $yt->page = PlaylistModel::bake($ytdata);
+            $ytdata = $response->getJson();
 
-        if (isset($yt->ucid)) {
-            // Init i18n for channel model
-            $i18n = &i18n::newNamespace("channels");
-            $i18n->registerFromFolder("i18n/channels");
+            $yt->page = PlaylistModel::bake($ytdata);
 
-            $params = new BrowseRequestParams();
-            $params->setTab("playlists");
-            $yt->partiallySelectTabs = true;
+            // Hitchhiker also showed the channel's header, so this also
+            // requests the channel page in order to get its owner's header.
+            $yt->ucid = $ytdata->header->playlistHeaderRenderer 
+                ->ownerEndpoint->browseEndpoint->browseId ?? null;
 
-            Request::queueInnertubeRequest("channel", "browse", (object) [
-                "browseId" => $yt->ucid,
-                "params" => Base64Url::encode($params->serializeToString())
-            ]);
-            $channeldata = json_decode(Request::getResponses()["channel"]);
-            $channelmodel = Channels4Model::bake($yt, $channeldata);
-            $yt->page->channelHeader = $channelmodel->header ?? null;
-        }
+            if (isset($yt->ucid))
+            {
+                // Init i18n for channel model
+                i18n::newNamespace("channels")->registerFromFolder("i18n/channels");
+
+                $params = new BrowseRequestParams();
+                $params->setTab("playlists");
+                $yt->partiallySelectTabs = true;
+
+                $channelResponse = yield Network::innertubeRequest(
+                    action: "browse", 
+                    body: [
+                        "browseId" => $yt->ucid,
+                        "params" => Base64Url::encode($params 
+                            ->serializeToString()
+                        )
+                    ]
+                );
+
+                // If there's a channel response, then use it.
+                // Otherwise this then is never executed.
+                $channelData = $channelResponse->getJson();
+
+                if ($header = @$channelData->header->c4TabbedHeaderRenderer)
+                {
+                    $yt->page->channelHeader = new MHeader($header, "/channel/$yt->ucid");
+                }
+                elseif ($header = @$channelData->header->carouselHeaderRenderer)
+                {
+                    $yt->page->channelHeader = new MCarouselHeader($header, "/channel/$yt->ucid");
+                }
+
+                // If user is signed in and channel owner, get data for the
+                // secondary channel header.
+                $ownerData = null;
+                if ($yt->ucid == @SignIn::getInfo()["ucid"])
+                {
+                    $ownerData = yield ChannelUtils::getOwnerData($yt->ucid);
+                }
+
+
+                if (!is_null($ownerData))
+                {
+                    $yt->page->secondaryHeader = new MSecondaryHeader($ownerData);
+                }
+
+                if (isset($yt->page->channelHeader))
+                {
+                    $header = &$yt->page->channelHeader;
+                    $yt->appbar->addNav();
+
+                    $yt->appbar->nav->addOwner(
+                        $header->getTitle(),
+                        "/channel/$yt->ucid",
+                        $header->thumbnail ?? "",
+                    );
+                }
+
+                if ($tabs = @$channelData->contents->twoColumnBrowseResultsRenderer->tabs)
+                {
+                    Channels4Model::processAndAddTabs(
+                        $yt,
+                        $tabs,
+                        $yt->page->channelHeader
+                    );
+                }
+            }
+        });
     }
 };

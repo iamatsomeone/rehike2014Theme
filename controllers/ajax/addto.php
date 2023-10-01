@@ -1,21 +1,27 @@
 <?php
 namespace Rehike\Controller\ajax;
 
+use Rehike\YtApp;
+use Rehike\ControllerV2\RequestMetadata;
+
 use Rehike\Controller\core\AjaxController;
 use Rehike\i18n;
-use Rehike\Request;
+use Rehike\Network;
 use Rehike\Model\AddTo\MAddTo as AddTo;
 
-return new class extends AjaxController {
-    public $useTemplate = true;
-    public $template = "ajax/addto";
-    public $contentType = "application/xml";
+return new class extends AjaxController 
+{
+    public bool $useTemplate = true;
+    public string $template = "ajax/addto";
+    public string $contentType = "application/xml";
 
-    public function onGet(&$yt, $request) {
-        return $this->onPost($yt, $request);
+    public function onGet(YtApp $yt, RequestMetadata $request): void
+    {
+        $this->onPost($yt, $request);
     }
 
-    public function onPost(&$yt, $request) {
+    public function onPost(YtApp $yt, RequestMetadata $request): void
+    {
         i18n::newNamespace("addto")->registerFromFolder("i18n/addto");
 
         // Because YouTube's own server is a bit weird, this
@@ -23,13 +29,17 @@ return new class extends AjaxController {
         // Hence: very gross fix for a server-side bug
         sleep(3);
 
-        $response = Request::innertubeRequest("playlist/get_add_to_playlist", (object)[
-            "videoIds" => explode(",", $_POST["video_ids"]) ?? [""]
-        ]);
-        $response = json_decode($response);
+        Network::innertubeRequest(
+            action: "playlist/get_add_to_playlist",
+            body: [
+                "videoIds" => explode(",", $_POST["video_ids"]) ?? [""]
+            ]
+        )->then(function ($response) use ($yt) {
+            $data = $response->getJson();
 
-        $lists = $response->contents[0]->addToPlaylistRenderer->playlists;
+            $lists = $data->contents[0]->addToPlaylistRenderer->playlists;
 
-        $yt->page->addto = new AddTo($lists);
+            $yt->page->addto = new AddTo($lists);
+        });
     }
 };

@@ -1,11 +1,26 @@
 <?php
+namespace Rehike\Controller\ajax;
+
+use Rehike\YtApp;
+use Rehike\ControllerV2\RequestMetadata;
+
 use \Rehike\Controller\core\AjaxController;
-use \Rehike\Request;
+use \Rehike\Network;
 
-return new class extends AjaxController {
-    public $useTemplate = false;
+/**
+ * Controller for the common service AJAX endpoint.
+ * 
+ * This includes things like liking videos.
+ * 
+ * @author Aubrey Pankow <aubyomori@gmail.com>
+ * @author The Rehike Maintainers
+ */
+return new class extends AjaxController
+{
+    public bool $useTemplate = false;
 
-    public function onPost(&$yt, $request) {
+    public function onPost(YtApp $yt, RequestMetadata $request): void
+    {
         if (!@$request->params->name) self::error();
 
         $endpoint = $request->params->name;
@@ -23,25 +38,33 @@ return new class extends AjaxController {
     /**
      * Like endpoint.
      */
-    private static function likeEndpoint() {
+    private static function likeEndpoint(): void
+    {
         $action = $_POST["action"];
         $videoId = $_POST["id"];
 
-        $response = Request::innertubeRequest("like/" . $action, (object) [
-            "target" => (object) [
-                "videoId" => $videoId
+        Network::innertubeRequest(
+            action: "like/$action",
+            body: [
+                "target" => [
+                    "videoId" => $videoId
+                ]
             ]
-        ]);
-        $ytdata = json_decode($response);
+        )->then(function ($response) {
+            $ytdata = $response->getJson();
 
-        if (!@$ytdata->errors) {
-            http_response_code(200);
-            echo json_encode((object) [
-                "code" => "SUCCESS"
-            ]);
-            die();
-        } else {
-            self::error();
-        }
+            if (!@$ytdata->errors)
+            {
+                http_response_code(200);
+                echo json_encode((object) [
+                    "code" => "SUCCESS"
+                ]);
+                die();
+            }
+            else
+            {
+                self::error();
+            }
+        });
     }
 };

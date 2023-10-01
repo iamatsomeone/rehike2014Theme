@@ -1,6 +1,9 @@
 <?php
 namespace Rehike\Player;
 
+use YukisCoffee\CoffeeRequest\CoffeeRequest;
+use YukisCoffee\CoffeeRequest\Enum\PromiseStatus;
+
 /**
  * A wrapper class for networking. 
  * 
@@ -15,26 +18,21 @@ class Network
 {
     const COFFEEREQUEST_LIBRARY = "YukisCoffee\\CoffeeRequest\\CoffeeRequest";
 
-    private static $mode = "curl";
-    private static $coffeeRequest;
+    private static string $mode = "curl";
+    private static CoffeeRequest $coffeeRequest;
 
     /**
      * Initialise the class
-     * 
-     * @return void
      */
-    public static function init()
+    public static function init(): void
     {
         self::determineMode();
     }
 
     /**
      * Perform a network request.
-     * 
-     * @param string $url
-     * @return string
      */
-    public static function request($url)
+    public static function request(string $url): string
     {
         switch (self::$mode)
         {
@@ -48,13 +46,18 @@ class Network
      * 
      * This is used within Rehike itself or when CoffeeRequest is 
      * otherwise available.
-     * 
-     * @param string $url
-     * @return string
      */
-    protected static function coffeeRequest($url)
+    protected static function coffeeRequest(string $url): string
     {
-        return self::$coffeeRequest->request($url);
+        $p = CoffeeRequest::request($url);
+
+        do
+        {
+            CoffeeRequest::run();
+        }
+        while (PromiseStatus::PENDING == $p->status);
+
+        return $p->result;
     }
 
     /**
@@ -62,11 +65,8 @@ class Network
      * 
      * This is used as a fallback when CoffeeRequest is not
      * available, such as when used by a third party project.
-     * 
-     * @param string $url
-     * @return string
      */
-    protected static function curlRequest($url)
+    protected static function curlRequest(string $url): string
     {
         $ch = curl_init($url);
 
@@ -87,15 +87,12 @@ class Network
      * The available options are
      *    - coffee (for CoffeeRequest)
      *    - curl (for cURL)
-     * 
-     * @return void
      */
-    protected static function determineMode()
+    protected static function determineMode(): void
     {
         if (self::coffeeAvailable())
         {
             self::$mode = "coffee";
-            self::$coffeeRequest = new \YukisCoffee\CoffeeRequest\CoffeeRequest;
         }
         else
         {
@@ -105,10 +102,8 @@ class Network
 
     /**
      * Check the availability of CoffeeRequest.
-     * 
-     * @return bool
      */
-    protected static function coffeeAvailable()
+    protected static function coffeeAvailable(): bool
     {
         return class_exists(self::COFFEEREQUEST_LIBRARY);
     }

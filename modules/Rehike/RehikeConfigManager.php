@@ -14,12 +14,12 @@ use YukisCoffee\PropertyAtPath;
  */
 class RehikeConfigManager extends ConfigManager
 {
-    public static $defaultConfig =
-    [
+    public static array $defaultConfig = [
         "appearance" => [
             "modernLogo" => true,
             "uploadButtonType" => "MENU",
             "largeSearchResults" => true,
+            "swapSearchViewsAndDate" => false,
             "showVersionInFooter" => true,
             "usernamePrepends" => false,
             "useRyd" => true,
@@ -28,23 +28,27 @@ class RehikeConfigManager extends ConfigManager
             "cssFixes" => true,
             "watchSidebarDates" => false,
             "watchSidebarVerification" => false,
-            "teaserReplies" => false,
             "oldBestOfYouTubeIcons" => false
+        ],
+        "experiments" => [
+            "useSignInV2" => false,
+            "disableSignInOnHome" => false
         ],
         "advanced" => [
             "enableDebugger" => false
         ],
         "hidden" => [
-            "securityIgnoreWindowsServerRunningAsSystem" => false
+            "securityIgnoreWindowsServerRunningAsSystem" => false,
+            "disableRehike" => false
         ]
     ];
 
-    public static $types =
-    [
+    public static array $types = [
         "appearance" => [
             "modernLogo" => "bool",
             "uploadButtonType" => "enum",
             "largeSearchResults" => "bool",
+            "swapSearchViewsAndDate" => "bool",
             "showVersionInFooter" => "bool",
             "usernamePrepends" => "bool",
             "useRyd" => "bool",
@@ -53,20 +57,24 @@ class RehikeConfigManager extends ConfigManager
             "cssFixes" => "bool",
             "watchSidebarDates" => "bool",
             "watchSidebarVerification" => "bool",
-            "teaserReplies" => "bool",
             "oldBestOfYouTubeIcons" => "bool"
+        ],
+        "experiments" => [
+            "useSignInV2" => "bool",
+            "disableSignInOnHome" => "bool"
         ],
         "advanced" => [
             "enableDebugger" => "bool"
         ],
         "hidden" => [
-            "securityIgnoreWindowsServerRunningAsSystem" => "bool"
+            "securityIgnoreWindowsServerRunningAsSystem" => "bool",
+            "disableRehike" => "bool"
         ]
     ];
 
-    // Old config compatability map
+    // Old config compatibility map
     // These are PropertyAtPath (JS-style) paths
-    public static $compatabilityMap = [
+    public static array $compatibilityMap = [
         "useRingoBranding" => "appearance.modernLogo",
         "uploadMenuType" => "appearance.uploadButtonType",
         "versionInFooter" => "appearance.showVersionInFooter",
@@ -83,16 +91,16 @@ class RehikeConfigManager extends ConfigManager
         "guideOnWatchPage" => "REMOVE",
         "useWebV2HomeEndpoint" => "REMOVE",
         "useGridHomeStyle" => "REMOVE",
-        "accountPickerYtStudio" => "REMOVE"
+        "accountPickerYtStudio" => "REMOVE",
+        "general.teaserReplies" => "REMOVE",
+        "appearance.allCommentsLink" => "REMOVE"
     ];
     
     /**
      * If configuration doesn't exist upon
      * attempt to load it, save it
-     * 
-     * @return object
      */
-    public static function loadConfig()
+    public static function loadConfig(): object
     {
         if (!file_exists( self::$file ))
         {
@@ -126,7 +134,7 @@ class RehikeConfigManager extends ConfigManager
             }
         }
 
-        foreach (self::$compatabilityMap as $key => $value) {
+        foreach (self::$compatibilityMap as $key => $value) {
             try {
                 if ($value == "REMOVE") {
                     PropertyAtPath::unset(self::$config, $key);

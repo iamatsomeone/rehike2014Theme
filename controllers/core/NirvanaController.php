@@ -1,10 +1,14 @@
 <?php
 namespace Rehike\Controller\core;
 
+use Rehike\YtApp;
 use SpfPhp\SpfPhp;
-use Rehike\Model\Appbar\MAppbar as Appbar;
-use Rehike\Model\Footer\MFooter as Footer;
-use Rehike\Model\Masthead\MMasthead as Masthead;
+
+use Rehike\Model\{
+    Appbar\MAppbar as Appbar,
+    Footer\MFooter as Footer,
+    Masthead\MMasthead as Masthead
+};
 
 /**
  * Defines a general YouTube Nirvana controller.
@@ -23,13 +27,11 @@ abstract class NirvanaController extends HitchhikerController
      * 
      * This should be true on pages like watch, where the guide
      * isn't open by default.
-     * 
-     * @var bool
      */
-    protected $delayLoadGuide = false;
+    protected bool $delayLoadGuide = false;
 
     /** @inheritdoc */
-    protected $spfIdListeners = [
+    protected array $spfIdListeners = [
         '@body<class>',
         'player-unavailable<class>',
         'debug',
@@ -45,7 +47,7 @@ abstract class NirvanaController extends HitchhikerController
     ];
 
     /** @inheritdoc */
-    protected function init(&$yt, &$template)
+    protected function init(YtApp $yt, string &$template): void
     {
         $yt->spfEnabled = true;
         $yt->useModularCore = true;
@@ -64,23 +66,9 @@ abstract class NirvanaController extends HitchhikerController
         // is open by default.
         if (!$this->delayLoadGuide && !SpfPhp::isSpfRequested())
         {
-            //$yt->appbar->addGuide($this->getPageGuide());
-
-            // Attempt async (better way):
-            $this->getGuideAsync();
-        }
-    }
-
-    public function postInit(&$yt, &$template)
-    {
-        parent::postInit($yt, $template);
-
-        // Load guide result (if available)
-        if ($this->hasAsyncGuideRequest())
-        {
-            $yt->appbar->addGuide(
-                $this->getGuideAsyncResult()
-            );
+            $this->getPageGuide()->then(function ($guide) use ($yt) {
+                $yt->appbar->addGuide($guide);
+            });
         }
     }
 
@@ -91,7 +79,7 @@ abstract class NirvanaController extends HitchhikerController
      * 
      * @return void
      */
-    protected function useJsModule($module)
+    protected function useJsModule(string $module): void
     {
         $this->yt->modularCoreModules[] = $module;
     }

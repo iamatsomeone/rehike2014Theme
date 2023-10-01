@@ -8,6 +8,8 @@ class CommentsHeader {
     public $commentsCountText;
     public $sortRenderer;
     public $simpleBoxRenderer;
+    public $createParams;
+    public $commentsCountEndpoint;
 
     public static function fromData($data) {
         $new = new self();

@@ -6,12 +6,14 @@ use Rehike\RehikeConfigManager as ConfigManager;
 use Rehike\Model\Common\MButton;
 use Rehike\Model\Common\MAlert;
 
+use Rehike\DisableRehike\DisableRehike;
+
 class ConfigModel {
     public static function bake($tab, $status = null) {
         $response = (object) [];
-        $i18n = i18n::newNamespace("rehike/config")->registerFromFolder("i18n/rehike/config");
+        $i18n = i18n::newNamespace("rehike/config") ->registerFromFolder("i18n/rehike/config");
         $tabs = (object) $i18n->tabs;
-        $props = json_decode(json_encode($i18n->props))->{$tab};
+        $props = json_decode(json_encode($i18n->props)) ->{$tab};
 
         $response->tab = $tab;
 
@@ -27,6 +29,11 @@ class ConfigModel {
                             "isSelected" => true,
                             "items" => []
                         ]
+                    ]
+                ],
+                "footButtons" => [
+                    (object)[
+                        "buttonRenderer" => self::getDisableRehikeButton()
                     ]
                 ]
             ]
@@ -52,7 +59,7 @@ class ConfigModel {
 
         foreach ($tabs as $name => $text) {
             $response->sidebar->creatorSidebarRenderer->sections[0]
-           ->creatorSidebarSectionRenderer->items[] = 
+            ->creatorSidebarSectionRenderer->items[] = 
             self::buildCreatorSidebarItem(
                 $text,
                 "/rehike/config/{$name}",
@@ -66,13 +73,13 @@ class ConfigModel {
         ];
 
         $contents = &$response->content->contents;
-        foreach (ConfigManager::getConfig()->{$tab} as $option => $value) {
+        foreach (ConfigManager::getConfig() ->{$tab} as $option => $value) {
             switch (ConfigManager::getConfigType("{$tab}.{$option}")) {
                 case "bool":
                     $contents[] = (object) [
                         "checkboxRenderer" => (object) [
-                            "title" => $props->{$option}->title ?? null,
-                            "subtitle" => $props->{$option}->subtitle ?? null,
+                            "title" => $props->{$option} ->title ?? null,
+                            "subtitle" => $props->{$option} ->subtitle ?? null,
                             "checked" => $value ? true : false,
                             "name" => "$tab.$option",
                         ]
@@ -82,7 +89,7 @@ class ConfigModel {
                     $values = [];
                     $selectedValue = null;
 
-                    foreach ($props->{$option}->values as $name => $text) {
+                    foreach ($props->{$option} ->values as $name => $text) {
                         $values[] = (object) [
                             "text" => $text,
                             "value" => $name,
@@ -94,7 +101,7 @@ class ConfigModel {
 
                     $contents[] = (object) [
                         "selectRenderer" => (object) [
-                            "label" => $props->{$option}->title,
+                            "label" => $props->{$option} ->title,
                             "name" => "$tab.$option",
                             "values" => $values,
                             "selectedValue" => $selectedValue
@@ -127,5 +134,34 @@ class ConfigModel {
                 "isSelected" => $selected
             ]
         ];
+    }
+
+    private static function getDisableRehikeButton(): MButton
+    {
+        if (!i18n::namespaceExists("disable_rehike"))
+            DisableRehike::initI18n();
+
+        $isDisabled = ConfigManager::getConfigProp("hidden.disableRehike");
+
+        $i18n = i18n::getNamespace("disable_rehike");
+
+        $buttonText = $isDisabled
+            ? $i18n->get("rhSettingsEnableRehike")
+            : $i18n->get("disableRehike");
+
+        return new MButton([
+            "style" => "STYLE_DARK",
+            "class" => [ "rehike-config-disable-rehike-button" ],
+            "attributes" => [
+                "disable-rehike-action" => $isDisabled ? "enable" : "disable",
+                "dialog-header-text" => $i18n->get("disableRehikeInfoHeader"),
+                "dialog-header-description" => $i18n->get("disableRehikeInfoDescription"),
+                "dialog-header-button-cancel" => $i18n->get("disableRehikeInfoCancel"),
+                "dialog-header-button-disable" => $i18n->get("disableRehikeInfoDisable")
+            ],
+            "text" => (object)[
+                "simpleText" => $buttonText
+            ]
+        ]);
     }
 }

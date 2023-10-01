@@ -1,17 +1,30 @@
 <?php
 namespace Rehike\Controller\core;
 
-use Rehike\TemplateManager;
-use Rehike\Request;
-use Rehike\SecurityChecker;
+use Rehike\{
+    YtApp,
+    TemplateManager,
+    Network,
+    i18n,
+    RehikeConfigManager,
+    SecurityChecker
+};
+
+use Rehike\Model\{
+    Guide\MGuide as Guide,
+    Footer\MFooter as Footer,
+    Masthead\MMasthead as Masthead,
+    Common\MAlert,
+    Rehike\Security\SecurityLightbox
+};
+
+use Rehike\Async\Promise;
+
 use Rehike\Player\PlayerCore;
 use SpfPhp\SpfPhp;
 use Rehike\ControllerV2\RequestMetadata;
 use Rehike\Debugger\Debugger;
-use Rehike\Model\Guide\MGuide as Guide;
-use Rehike\Model\Footer\MFooter as Footer;
-use Rehike\Model\Masthead\MMasthead as Masthead;
-use Rehike\Model\Rehike\Security\SecurityLightbox;
+use Rehike\DisableRehike\DisableRehike;
 
 /**
  * Defines a general YouTube Hitchhiker controller.
@@ -30,12 +43,12 @@ abstract class HitchhikerController
      * 
      * @var object
      */
-    protected static $currentEndpoint;
+    protected static object $currentEndpoint;
 
     /**
      * Stores all information that is sent to Twig for rendering the page.
      * 
-     * @var object $yt
+     * @var YtApp $yt
      *   + useModularCore (bool, required) - Toggles base.js/core.js use by Hitchhiker.
      *   + modularCoreModules (string[]) - Defines base.js page modules.
      *   + spfEnabled (bool, required) - Enables YouTube SPF (soft loading).
@@ -44,27 +57,23 @@ abstract class HitchhikerController
      *   + appbar (object) - Available in NirvanaController; defines YouTube Appbar.
      *   + page (object) - Page metadata
      */
-    protected $yt;
+    protected YtApp $yt;
 
     /**
      * Defines the default page template.
      * 
      * This may be overridden for certain contexts in an onGet()
      * callback.
-     * 
-     * @var string
      */
-    public $template = "";
+    public string $template = "";
 
     /**
      * Whether or not we should use a Twig template to render.
      * 
      * Some AJAX responses are so simple, that using a template
      * makes no sense.
-     * 
-     * @var boolean
      */
-    public $useTemplate = true;
+    public bool $useTemplate = true;
 
     /**
      * Defines the default element IDs that are listened to by
@@ -74,7 +83,7 @@ abstract class HitchhikerController
      * 
      * @var string[]
      */
-    protected $spfIdListeners = [
+    protected array $spfIdListeners = [
         'player-unavailable<class>',
         'alerts',
         'content',
@@ -88,7 +97,7 @@ abstract class HitchhikerController
      * 
      * @var string
      */
-    public $contentType = "text/html";
+    public string $contentType = "text/html";
 
     /**
      * Implements the base functionality that is ran on every GET request.
@@ -96,24 +105,24 @@ abstract class HitchhikerController
      * This function should not be overridden for page-specific
      * functionality. Use the controller's API (onGet()) for that.
      * 
-     * @param object $yt                 Template data.
+     * @param YtApp $yt                  Template data.
      * 
      * @param string $template           Passes a template in and out of the function.
      *                                   For API usage, you can safely ignore this. It only
      *                                   matters on the technical end.
      * 
      * @param RequestMetadata $request   Reports request metadata.
-     * 
-     * @return void
      */
-    public function get(&$yt, &$template, $request)
+    public function get(YtApp $yt, string &$template, RequestMetadata $request): void
     {
         header("Content-Type: " .  $this->contentType);
-        $this->yt = &$yt;
+        $this->yt = $yt;
         $this->init($yt, $template);
         $this->initPlayer($yt);
 
         $this->onGet($yt, $request);
+
+        Network::run();
 
         $this->postInit($yt, $template);
 
@@ -126,23 +135,23 @@ abstract class HitchhikerController
      * This function should not be overridden for page-specific
      * functionality. Use the controller's API (onPost()) for that.
      * 
-     * @param object $yt                 Template data.
+     * @param YtApp $yt                  Template data.
      * 
      * @param string $template           Passes a template in and out of the function.
      *                                   For API usage, you can safely ignore this. It only
      *                                   matters on the technical end.
      * 
      * @param RequestMetadata $request   Reports request metadata.
-     * 
-     * @return void
      */
-    public function post(&$yt, &$template, $request)
+    public function post(YtApp $yt, string &$template, RequestMetadata $request): void
     {
         header("Content-Type: " .  $this->contentType);
-        $this->yt = &$yt;
+        $this->yt = $yt;
         $this->init($yt, $template);
 
         $this->onPost($yt, $request);
+
+        Network::run();
 
         $this->postInit($yt, $template);
 
@@ -151,11 +160,8 @@ abstract class HitchhikerController
 
     /**
      * Initialise the player.
-     * 
-     * @param object $yt        Template data.
-     * @return void
      */
-    public function initPlayer(&$yt)
+    public function initPlayer(YtApp $yt): void
     {
         $playerConfig = PlayerCore::getInfo();
 
@@ -168,55 +174,19 @@ abstract class HitchhikerController
      * As Rehike implements a Nirvana frontend primarily, this behaviour
      * is unused by the base Hitchhiker controller. This function
      * is used by NirvanaController.
-     * 
-     * @return object
      */
-    public function getPageGuide()
+    public function getPageGuide(): Promise
     {
-        $response = Request::innertubeRequest("guide", (object)[]);
-
-        $guide = json_decode($response);
-
-        return Guide::fromData($guide);
-    }
-
-    protected static $hasAsyncGuideRequest = false;
-
-    /**
-     * Asynchronously request the guide so that it can be worked
-     * with later.
-     * 
-     * This provides a more optimal implementation of the above
-     * function.
-     * 
-     * @return void
-     */
-    public function getGuideAsync()
-    {
-        self::$hasAsyncGuideRequest = true;
-
-        Request::queueInnertubeRequest("_guide", "guide", (object)[]);
-    }
-
-    public function hasAsyncGuideRequest()
-    {
-        return self::$hasAsyncGuideRequest;
-    }
-
-    /**
-     * Get the result of the asynchronous guide request.
-     * 
-     * @return object
-     */
-    public function getGuideAsyncResult()
-    {
-        $guide = Request::getResponses()["_guide"] ?? null;
-
-        if (is_null($guide)) return null;
-
-        return Guide::fromData(
-            json_decode($guide)
-        );
+        return new Promise(function ($resolve) {
+            Network::innertubeRequest("guide")->then(function ($response) 
+                    use ($resolve) 
+            {
+                $data = $response->getJson();
+                $guide = Guide::fromData($data);
+                
+                $resolve($guide);
+            });
+        });
     }
 
     /**
@@ -227,9 +197,9 @@ abstract class HitchhikerController
      * to select.
      * 
      * @param string $type of the endpoint
-     * @param string $a (whatever the endpoint offers)
+     * @param string $endpoint (whatever the endpoint offers)
      */
-    public function setEndpoint($type, $a)
+    public function setEndpoint(string $type, string $endpoint): void
     {
         $type = strtolower($type);
 
@@ -240,12 +210,12 @@ abstract class HitchhikerController
         {
             case "browse":
                 $data["browseEndpoint"] = (object)[
-                    "browseId" => $a
+                    "browseId" => $endpoint
                 ];
                 break;
             case "url":
                 $data["urlEndpoint"] = (object)[
-                    "url" => $a
+                    "url" => $endpoint
                 ];
                 break;
         }
@@ -261,10 +231,8 @@ abstract class HitchhikerController
      * 
      * @param object $yt                Template data.
      * @param RequestMetadata $request  Reports request metadata.
-     * 
-     * @return void
      */
-    public function onGet(&$yt, $request) {}
+    public function onGet(YtApp $yt, RequestMetadata $request): void {}
 
     /**
      * Defines the API for handling POST requests. Pages should always use this;
@@ -272,10 +240,8 @@ abstract class HitchhikerController
      * 
      * @param object $yt                Template data.
      * @param RequestMetadata $request  Reports request metadata.
-     * 
-     * @return void
      */
-    public function onPost(&$yt, $request) {}
+    public function onPost(YtApp $yt, RequestMetadata $request): void {}
 
     /**
      * Set initial variables for this controller type.
@@ -285,7 +251,7 @@ abstract class HitchhikerController
      * 
      * @return void
      */
-    protected function init(&$yt, &$template)
+    protected function init(YtApp $yt, string &$template): void
     {
         $yt->spfEnabled = false;
         $yt->useModularCore = false;
@@ -304,28 +270,48 @@ abstract class HitchhikerController
      * 
      * @param $yt        Template data.
      * @param $template  Backend template data.
-     * 
-     * @return void
      */
-    public function postInit(&$yt, &$template)
+    public function postInit(YtApp $yt, string &$template): void
     {
         $template = $this->template;
         
-        $yt->currentEndpoint = self::$currentEndpoint;
+        if (isset(self::$currentEndpoint))
+        {
+            $yt->currentEndpoint = self::$currentEndpoint;
+        }
+        else
+        {
+            $yt->currentEndpoint = null;
+        }
 
         if (!SecurityChecker::isSecure() && !SpfPhp::isSpfRequested())
         {
             $yt->rehikeSecurityNotice = new SecurityLightbox();
+        }
+
+        if (RehikeConfigManager::getConfigProp("hidden.disableRehike") == true)
+        {
+            if (!isset($yt->page->alerts))
+                $yt->page->alerts = [];
+
+            if (!i18n::namespaceExists("disable_rehike"))
+                DisableRehike::initI18n();
+
+            $i18n = i18n::getNamespace("disable_rehike");
+            
+            $yt->page->alerts[] = new MAlert([
+                "type" => MAlert::TypeWarning,
+                "text" => $i18n->get("currentlyDisabledMessage"),
+                "hasCloseButton" => false
+            ]);
         }
     }
 
     /**
      * Perform a Twig render, accounting for SPF status if it is enabled, and
      * reporting the debugger if it is enabled.
-     * 
-     * @return void
      */
-    public function doGeneralRender()
+    public function doGeneralRender(): void
     {
         if (SpfPhp::isSpfRequested() && $this->yt->spfEnabled)
         {
@@ -374,5 +360,5 @@ abstract class HitchhikerController
      * @param object $data reference
      * @return void
      */
-    public function handleSpfData(&$data) {}
+    public function handleSpfData(object $data): void {}
 }

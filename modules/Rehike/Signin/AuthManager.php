@@ -1,9 +1,14 @@
 <?php
 namespace Rehike\Signin;
 
-use \YukisCoffee\CoffeeRequest\CoffeeRequest;
-use \Rehike\Request;
+use YukisCoffee\CoffeeRequest\CoffeeRequest;
+use YukisCoffee\CoffeeRequest\Promise;
+use YukisCoffee\CoffeeRequest\Network\Request;
+use YukisCoffee\CoffeeRequest\Network\Response;
+
+use Rehike\Network;
 use Rehike\FileSystem as FS;
+use Rehike\YtApp;
 
 /**
  * Treat this as private. Use the API please.
@@ -20,9 +25,8 @@ class AuthManager
      * Stores the value returned by the public API method self::shouldAuth().
      * 
      * @internal
-     * @var bool
      */
-    private static $shouldAuth = false;
+    private static bool $shouldAuth = false;
 
     /**
      * Stores the user's SAPISID; a login cookie used to authenticate each
@@ -30,20 +34,16 @@ class AuthManager
      * 
      * During the authentication process, this is hashed, resulting in an
      * SAPISIDHASH value.
-     * 
-     * @var string
      */
-    private static $sapisid;
+    private static string $sapisid;
 
     /**
      * Stores the current account's GAIA ID.
      * 
      * This is used internally in some places, as well as is used to identify
      * the Google account as a whole.
-     * 
-     * @var string
      */
-    private static $currentGaiaId = "";
+    private static string $currentGaiaId = "";
 
     /**
      * Stores the current signin state.
@@ -51,35 +51,28 @@ class AuthManager
      * This isn't guaranteed. If an error occurs while attempting to get
      * authentication data, the signin request will be rejected and this will
      * remain false.
-     * 
-     * @var bool
      */
-    public static $isSignedIn = false;
+    public static bool $isSignedIn = false;
 
     /**
      * Stores the resulting information from a signin request.
-     * 
-     * @var ?array
      */
-    public static $info = null;
+    public static ?array $info = null;
 
     public static function __initStatic()
     {
         self::init();
     }
 
-    public static function init()
+    public static function init(): void
     {
         self::$shouldAuth = self::determineShouldAuth();
     }
 
     /**
      * Provide the global context ($yt) for internal use.
-     * 
-     * @param object $yt Global context
-     * @return void
      */
-    public static function use(&$yt)
+    public static function use(YtApp $yt): void
     {
         // Merge data into main variable sent to the
         // templater and whatnot.
@@ -87,7 +80,7 @@ class AuthManager
 
         if (self::shouldAuth())
         {
-            Request::useAuth();
+            Network::useAuthService();
 
             $data = self::getSigninData();
 
@@ -102,10 +95,8 @@ class AuthManager
 
     /**
      * Get if authentication is available.
-     * 
-     * @return bool
      */
-    public static function shouldAuth()
+    public static function shouldAuth(): bool
     {
         return self::$shouldAuth;
     }
@@ -113,10 +104,8 @@ class AuthManager
     /**
      * Used internally as a one-time determination of the authentication's
      * availability.
-     * 
-     * @return bool
      */
-    private static function determineShouldAuth()
+    private static function determineShouldAuth(): bool
     {
         // Determined by the presence of SAPISID cookie.
         if (isset($_COOKIE) && isset($_COOKIE["SAPISID"]))
@@ -131,11 +120,8 @@ class AuthManager
     /**
      * Get the contents of the authentication HTTP header. This will generate
      * a new SAPISIDHASH.
-     * 
-     * @param string $origin
-     * @return string
      */
-    public static function getAuthHeader($origin = "https://www.youtube.com")
+    public static function getAuthHeader(string $origin = "https://www.youtube.com"): string
     {
         $sapisid = self::$sapisid;
         $time = time();
@@ -145,20 +131,16 @@ class AuthManager
 
     /**
      * Get the current user's GAIA ID.
-     * 
-     * @return string
      */
-    public static function getGaiaId()
+    public static function getGaiaId(): string
     {
         return self::$currentGaiaId;
     }
 
     /**
      * Retrieve signin data from the server or cache.
-     * 
-     * @return array
      */
-    public static function getSigninData()
+    public static function getSigninData(): array
     {
         if (null != self::$info)
         {
@@ -174,7 +156,7 @@ class AuthManager
                     $data->switcher
                 );
 
-                Request::authUseGaiaId();
+                Network::useAuthGaiaId();
 
                 self::processMenuData(self::$info, $data->menu);
 
@@ -189,36 +171,37 @@ class AuthManager
 
     /**
      * Request signin data from the server.
-     * 
-     * @return array
      */
-    public static function requestSigninData()
+    public static function requestSigninData(): array
     {
-        // Temporarily switch the request namespace
-        $previousNamespace = Request::getNamespace();
+        /** @var string */
+        $switcher = null;
+        /** @var string */
+        $menu = null;
 
-        // Perform the necessary request
-        Request::setNamespace("rehike.signin_temp_ns");
-
-        // These must be separate in order to account for GAIA id.
-        Request::queueUrlRequest("switcher", "https://www.youtube.com/getAccountSwitcherEndpoint");
-        $switcher = Request::getResponses()["switcher"];
+        $info = null;
         
-        $info = self::processSwitcherData($switcher);
-        
-        Request::authUseGaiaId();
-        
-        // Then the account menu request can work
-        // also hack i can't be fucked to fix the other code
-        Request::queueInnertubeRequest("menu", "account/account_menu", (object)[
-            "deviceTheme" => "DEVICE_THEME_SUPPORTED",
-            "userInterfaceTheme" => "USER_INTERFACE_THEME_DARK"
-        ]);
-        $menu = Request::getResponses()["menu"];
+        Network::urlRequest(
+            "https://www.youtube.com/getAccountSwitcherEndpoint",
+            Network::getDefaultYoutubeOpts()
+        )->then(function($response) use (&$switcher, &$info) {
+            $switcher = $response->getText();
 
-        // Reset the request namespace now that I'm done!
-        Request::setNamespace($previousNamespace);
+            $info = self::processSwitcherData($switcher);
 
+            Network::useAuthGaiaId();
+
+            return Network::innertubeRequest("account/account_menu", [
+                "deviceTheme" => "DEVICE_THEME_SUPPORTED",
+                "userInterfaceTheme" => "USER_INTERFACE_THEME_DARK"
+            ]);
+        })->then(function($response) use (&$menu) {
+            $menu = $response->getText();
+        });
+
+        // This call blocks the thread until the requests are done.
+        Network::run();
+        
         self::processMenuData($info, $menu);
 
         $responses = [
@@ -235,10 +218,9 @@ class AuthManager
      * Generate a new signin data array from the getAccountSwitcherEndpoint
      * response.
      * 
-     * @param string $switcher getAccountSwitcherEndpoint response
-     * @return array
+     * @param $switcher getAccountSwitcherEndpoint response
      */
-    public static function processSwitcherData($switcher)
+    public static function processSwitcherData(string $switcher): array
     {
         $info = Switcher::parseResponse($switcher);
 
@@ -255,10 +237,10 @@ class AuthManager
      * Modify the switcher endpoint's data to add the UCID obtained from the
      * menu data.
      * 
-     * @param array $info Reference to the data to modify.
-     * @param string $menu Response of the account_menu endpoint.
+     * @param $info Reference to the data to modify.
+     * @param $menu Response of the account_menu endpoint.
      */
-    public static function processMenuData(&$info, $menu)
+    public static function processMenuData(?array &$info, string $menu): void
     {
         // UCID must be retrieved here to work with GAIA id
         $info["ucid"] = self::getUcid(json_decode($menu));
@@ -266,11 +248,8 @@ class AuthManager
 
     /**
      * Get the UCID of the active channel.
-     * 
-     * @param object $menu
-     * @return string
      */
-    public static function getUcid($menu)
+    public static function getUcid(object $menu): string
     {
         if ($items = @$menu->actions[0]->openPopupAction->popup
             ->multiPageMenuRenderer->sections[0]->multiPageMenuSectionRenderer
@@ -296,7 +275,7 @@ class AuthManager
      * 
      * @return string (even "null" as a string)
      */
-    public static function getUniqueSessionCookie()
+    public static function getUniqueSessionCookie(): string
     {
         if (isset($_COOKIE["LOGIN_INFO"]))
         {

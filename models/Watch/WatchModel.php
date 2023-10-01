@@ -4,6 +4,12 @@ namespace Rehike\Model\Watch;
 use Rehike\ConfigManager\ConfigManager;
 use Rehike\Signin\API as SignIn;
 
+use Rehike\Model\Watch\AgeGate\MPlayerAgeGate;
+use Rehike\Model\Watch\AgeGate\MPlayerContentGate;
+
+use Rehike\Async\Promise;
+use function Rehike\Async\async;
+
 /**
  * Implements all logic pertaining to the generation of watch
  * page data.
@@ -54,48 +60,66 @@ class WatchModel
      */
     public static function bake(&$yt, $data, $videoId, $rydData = null)
     {
-        // Initial logic
-        self::$yt = &$yt;
-        self::$response = &$data;
-        self::$rydData = $rydData;
-        self::$useRyd = self::shouldUseRyd();
-        self::destructureData($data->contents);
-        self::$subController = self::getSubcontroller();
-        self::$engagementPanels = $data->engagementPanels ?? null;
+        return async(function() use (&$yt, $data, $videoId, $rydData) {
+            // Initial logic
+            self::$yt = &$yt;
+            self::$response = &$data;
+            self::$rydData = $rydData;
+            self::$useRyd = self::shouldUseRyd();
+            self::destructureData($data->contents);
+            self::$subController = self::getSubcontroller();
+            self::$engagementPanels = $data->engagementPanels ?? null;
 
-        self::$isKidsVideo = self::getIsKidsVideo(self::$secondaryInfo);
-        self::$isLive = self::getIsLive(self::$primaryInfo);
-        self::$isOwner = self::getIsOwner(self::$secondaryInfo);
+            self::$isKidsVideo = self::getIsKidsVideo(self::$secondaryInfo);
+            self::$isLive = self::getIsLive(self::$primaryInfo);
+            self::$isOwner = self::getIsOwner(self::$secondaryInfo);
 
-        // Get player error
-        if ($error = @$yt->playerResponse->playabilityStatus->errorScreen->playerErrorMessageRenderer)
-        {
-            $yt->playerUnavailable = $error;
-
-            if (!isset($yt->playerUnavailable->subreason))
+            // Get player error
+            if ($error = @$yt->playerResponse->playabilityStatus->errorScreen->playerErrorMessageRenderer)
             {
-                $yt->playerUnavailable->subreason = (object)[
-                    "simpleText" => "Sorry about that."
-                ];
+                $status = $yt->playerResponse->playabilityStatus->status ?? "";
+
+                // If it's age restriction, show that
+                if ("LOGIN_REQUIRED" == $status)
+                {
+                    $yt->playerUnavailable = new MPlayerAgeGate();
+                }
+                else if ("AGE_CHECK_REQUIRED" == $status)
+                {
+                    $yt->playerUnavailable = new MPlayerAgeGate($error);
+                }
+                else if ("CONTENT_CHECK_REQUIRED" == $status)
+                {
+                    /*
+                    * Content that requires a content check (i.e. suicide-related)
+                    * does not require the user to be signed in.
+                    */
+                    $yt->playerUnavailable = new MPlayerContentGate($error);
+                }
+                else
+                {
+                    $yt->playerUnavailable = $error;
+
+                    if (!isset($yt->playerUnavailable->subreason))
+                    {
+                        $yt->playerUnavailable->subreason = (object)[
+                            "simpleText" => "Sorry about that."
+                        ];
+                    }
+                }
             }
 
-            // If it's age restriction, show that
-            if ("LOGIN_REQUIRED" == @$yt->playerResponse->playabilityStatus->status)
-            {
-                $yt->playerUnavailable = new MPlayerAgeGate();
-            }
-        }
-
-        // Model baking logic
-        return (object) [
-            "isLive" => self::$isLive,
-            "isOwner" => self::$isOwner,
-            "results" => self::bakeResults($data, $videoId),
-            "secondaryResults" => self::bakeSecondaryResults($data),
-            "title" => self::$title,
-            "playlist" => self::bakePlaylist($data),
-            "liveChat" => self::$liveChat
-        ];
+            // Model baking logic
+            return (object) [
+                "isLive" => self::$isLive,
+                "isOwner" => self::$isOwner,
+                "results" => yield self::bakeResults($data, $videoId),
+                "secondaryResults" => self::bakeSecondaryResults($data),
+                "title" => self::$title,
+                "playlist" => self::bakePlaylist(),
+                "liveChat" => self::$liveChat
+            ];
+        });
     }
 
     /**
@@ -181,7 +205,9 @@ class WatchModel
      */
     public static function bakeResults(&$data, &$videoId)
     {
-        return self::$subController::bakeResults($data, $videoId);
+        return async(function() use (&$data, &$videoId) {
+            return yield self::$subController::bakeResults($data, $videoId);
+        });
     }
 
     /**
@@ -201,13 +227,10 @@ class WatchModel
      * Bake playlist
      * 
      * Call gets passed to subcontroller for handling.
-     * 
-     * @param object $data from watch results response
-     * @return object
      */
-    public static function bakePlaylist(&$data)
+    public static function bakePlaylist(): ?object
     {
-        return self::$subController::bakePlaylist($data);
+        return self::$subController::bakePlaylist();
     }
 
     /**

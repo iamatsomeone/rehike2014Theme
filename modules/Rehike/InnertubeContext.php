@@ -1,6 +1,8 @@
 <?php
 namespace Rehike;
 
+use Rehike\Util\Base64Url;
+
 /**
  * Generates a valid InnerTube client context required
  * for requesting the API.
@@ -13,27 +15,6 @@ namespace Rehike;
 class InnertubeContext
 {
     /**
-     * Encode a string in base64 url format.
-     * 
-     * This doesn't have = padding and replaces the
-     *      + /
-     * characters with
-     *      - _
-     * to be transmissable through a URL.
-     * 
-     * 
-     * This should be ideally be moved to a trait later for use across
-     * multiple different classes.
-     * 
-     * @param string $data
-     * @return string url-friendly base64
-     */
-    public static function base64url_encode($data) 
-    {
-        return str_replace("=", "%3D", strtr(base64_encode($data), '+/', '-_'));
-    } 
-
-    /**
      * Convert an integer to a ULEB128 binary for use in
      * synthesising protobuf.
      * 
@@ -42,7 +23,7 @@ class InnertubeContext
      * @param int $int to convert
      * @return string uleb128 binary
      */
-    public static function int2uleb128($int)
+    public static function int2uleb128(int $int): string
     {
         // this is awful
         // i hate the person who wrot ethis
@@ -92,13 +73,14 @@ class InnertubeContext
      * @param string $visitor
      * @return string encoded visitor data
      */
-    public static function genVisitorData($visitor)
+    public static function genVisitorData(string $visitor): string
     {
         // Generate visitorData string
+        if (is_null($visitor)) return "";
         
         $date = time();
         
-        return self::base64url_encode(
+        return Base64Url::encode(
             chr(0x0a) . self::int2uleb128( strlen($visitor) ) . $visitor . chr(0x28) . self::int2uleb128($date)
         );
     }
@@ -114,7 +96,13 @@ class InnertubeContext
      * 
      * @return object InnerTube context
      */
-    public static function generate($cname, $cver, $visitorData = null, $hl = 'en', $gl = 'US')
+    public static function generate(
+            string|int $cname, 
+            string $cver, 
+            ?string $visitorData = null, 
+            string $hl = "en", 
+            string $gl = "US"
+    ): object
     {
         if (is_null($visitorData)) $visitorData = ContextManager::$visitorData;
         return (object) [
